@@ -5,8 +5,9 @@ import com.eventledger.account.domain.TransactionType;
 import java.math.BigDecimal;
 import java.time.Instant;
 
-public record TransactionSummary(
+public record TransactionResponse(
         String eventId,
+        Long accountId,
         TransactionType type,
         BigDecimal amount,
         String currency,

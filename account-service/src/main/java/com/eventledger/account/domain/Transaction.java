@@ -3,7 +3,6 @@ package com.eventledger.account.domain;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.UUID;
 
 @Entity
 @Table(name = "transactions")
@@ -11,7 +10,7 @@ public class Transaction {
 
     @Id
     @Column(name = "event_id")
-    private UUID eventId;
+    private String eventId;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "account_id", nullable = false)
@@ -30,8 +29,8 @@ public class Transaction {
     @Column(name = "event_timestamp", nullable = false)
     private Instant eventTimestamp;
 
-    public UUID getEventId() { return eventId; }
-    public void setEventId(UUID eventId) { this.eventId = eventId; }
+    public String getEventId() { return eventId; }
+    public void setEventId(String eventId) { this.eventId = eventId; }
 
     public Account getAccount() { return account; }
     public void setAccount(Account account) { this.account = account; }

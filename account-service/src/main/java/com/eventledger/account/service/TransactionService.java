@@ -26,11 +26,14 @@ public class TransactionService {
         this.transactionRepository = transactionRepository;
     }
 
+    public record ProcessResult(boolean isNew, Transaction transaction, Long accountId) {}
+
     @Transactional
-    public boolean process(Long accountId, TransactionRequest req) {
-        if (transactionRepository.existsById(req.getEventId())) {
+    public ProcessResult process(Long accountId, TransactionRequest req) {
+        Transaction existing = transactionRepository.findById(req.getEventId()).orElse(null);
+        if (existing != null) {
             log.info("Duplicate event ignored eventId={} accountId={}", req.getEventId(), accountId);
-            return false;
+            return new ProcessResult(false, existing, accountId);
         }
 
         Account account = accountRepository.findById(accountId)
@@ -54,6 +57,6 @@ public class TransactionService {
         transactionRepository.save(tx);
         log.info("Transaction saved eventId={} accountId={} type={} amount={} currency={}",
                 req.getEventId(), accountId, req.getType(), req.getAmount(), req.getCurrency());
-        return true;
+        return new ProcessResult(true, tx, accountId);
     }
 }

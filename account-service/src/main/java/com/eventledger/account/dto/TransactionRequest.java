@@ -4,12 +4,11 @@ import com.eventledger.account.domain.TransactionType;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.UUID;
 
 public class TransactionRequest {
 
-    @NotNull
-    private UUID eventId;
+    @NotBlank
+    private String eventId;
 
     @NotNull
     private TransactionType type;
@@ -25,8 +24,8 @@ public class TransactionRequest {
     @NotNull
     private Instant eventTimestamp;
 
-    public UUID getEventId() { return eventId; }
-    public void setEventId(UUID eventId) { this.eventId = eventId; }
+    public String getEventId() { return eventId; }
+    public void setEventId(String eventId) { this.eventId = eventId; }
 
     public TransactionType getType() { return type; }
     public void setType(TransactionType type) { this.type = type; }
