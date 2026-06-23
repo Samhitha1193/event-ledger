@@ -5,6 +5,8 @@ import com.eventledger.account.domain.Transaction;
 import com.eventledger.account.dto.TransactionRequest;
 import com.eventledger.account.repository.AccountRepository;
 import com.eventledger.account.repository.TransactionRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class TransactionService {
+
+    private static final Logger log = LoggerFactory.getLogger(TransactionService.class);
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
@@ -22,12 +26,10 @@ public class TransactionService {
         this.transactionRepository = transactionRepository;
     }
 
-    /**
-     * Returns true if the transaction was newly saved, false if it was a duplicate.
-     */
     @Transactional
     public boolean process(Long accountId, TransactionRequest req) {
         if (transactionRepository.existsById(req.getEventId())) {
+            log.info("Duplicate event ignored eventId={} accountId={}", req.getEventId(), accountId);
             return false;
         }
 
@@ -50,6 +52,8 @@ public class TransactionService {
         tx.setCurrency(req.getCurrency());
         tx.setEventTimestamp(req.getEventTimestamp());
         transactionRepository.save(tx);
+        log.info("Transaction saved eventId={} accountId={} type={} amount={} currency={}",
+                req.getEventId(), accountId, req.getType(), req.getAmount(), req.getCurrency());
         return true;
     }
 }
