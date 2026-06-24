@@ -1,5 +1,6 @@
 package com.eventledger.gateway.controller;
 
+import com.eventledger.gateway.domain.Event;
 import com.eventledger.gateway.dto.EventRequest;
 import com.eventledger.gateway.dto.EventResponse;
 import com.eventledger.gateway.service.EventService;
@@ -10,6 +11,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/events")
@@ -25,8 +29,15 @@ public class EventController {
     public ResponseEntity<EventResponse> create(@Valid @RequestBody EventRequest request) {
         String fingerprint = eventService.computeFingerprint(request);
 
-        if (eventService.isDuplicate(fingerprint)) {
-            return ResponseEntity.ok().build();
+        Optional<Event> existing = eventService.findById(request.eventId());
+
+        if (existing.isPresent()) {
+            Event event = existing.get();
+            if (event.getPayloadFingerprint().equals(fingerprint)) {
+                return ResponseEntity.ok(EventResponse.from(event));
+            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Event ID already exists with a different payload");
         }
 
         return ResponseEntity

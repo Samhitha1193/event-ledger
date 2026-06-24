@@ -59,6 +59,34 @@ following JSON. All monetary values are `BigDecimal` — never `double` or
 > services. Never use `double` or `float` — they cannot represent decimal
 > fractions exactly and will silently corrupt financial calculations.
 
+## Architecture Decisions
+
+### POST /events — account-first write order
+
+When the Gateway receives a new event it must apply the financial transaction
+to the Account Service **before** writing anything to its own database.
+
+**Order of operations**
+
+1. Validate the request (400 if invalid).
+2. Look up `event_id` in the Gateway database to detect duplicates.
+3. **Call `POST /accounts/{accountId}/transactions` on the Account Service.**
+4. Only if that call returns 2xx: persist the event in the Gateway database and return 201.
+5. If the Account Service call fails for any reason (network error, timeout, 4xx, 5xx): return **503 Service Unavailable** and save nothing.
+
+**Why this order?**
+
+The account balance is the source of truth. Writing the event locally first
+and then failing to apply it to the Account Service would leave the Gateway
+database with a record of a transaction that never actually changed any
+balance — a phantom event. By calling the Account Service first we ensure
+that the Gateway only records events that are known to have been applied.
+The trade-off is that a crash between the Account Service success and the
+Gateway write can produce the reverse problem (applied but unrecorded), but
+this is recoverable via the duplicate-check on re-submission: the client
+retries with the same `event_id`, the fingerprint matches, and the Gateway
+returns 200 with the stored event.
+
 ## Requirements
 
 - Java 21

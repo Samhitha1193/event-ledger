@@ -1,5 +1,6 @@
 package com.eventledger.gateway.service;
 
+import com.eventledger.gateway.client.AccountServiceClient;
 import com.eventledger.gateway.domain.Event;
 import com.eventledger.gateway.dto.EventRequest;
 import com.eventledger.gateway.repository.EventRepository;
@@ -15,9 +16,11 @@ import java.util.Optional;
 public class EventService {
 
     private final EventRepository repository;
+    private final AccountServiceClient accountServiceClient;
 
-    public EventService(EventRepository repository) {
+    public EventService(EventRepository repository, AccountServiceClient accountServiceClient) {
         this.repository = repository;
+        this.accountServiceClient = accountServiceClient;
     }
 
     public String computeFingerprint(EventRequest req) {
@@ -37,11 +40,8 @@ public class EventService {
         }
     }
 
-    public boolean isDuplicate(String fingerprint) {
-        return repository.findByPayloadFingerprint(fingerprint).isPresent();
-    }
-
     public Event save(EventRequest req, String fingerprint) {
+        accountServiceClient.applyTransaction(req);
         return repository.save(new Event(
                 req.eventId(),
                 req.accountId(),
