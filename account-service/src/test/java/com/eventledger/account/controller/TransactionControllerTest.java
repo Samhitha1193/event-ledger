@@ -1,4 +1,4 @@
-package com.eventledger.account;
+package com.eventledger.account.controller;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,14 +61,52 @@ class TransactionControllerTest {
 
     @Test
     void outOfOrder_debitArrivesBeforeCredit_balanceReflectsBothRegardlessOfArrivalOrder() {
-        // DEBIT arrives first even though the credit happened "first" in business time
         post("/accounts/ac5/transactions", txBody("tx-ac5-e2", "DEBIT", 100, "USD"));
         post("/accounts/ac5/transactions", txBody("tx-ac5-e1", "CREDIT", 300, "USD"));
 
         ResponseEntity<Map> resp = rest.getForEntity("/accounts/ac5/balance", Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         Number balance = (Number) resp.getBody().get("balance");
-        assertThat(balance.doubleValue()).isEqualTo(200.0); // 300 credit − 100 debit
+        assertThat(balance.doubleValue()).isEqualTo(200.0);
+    }
+
+    @Test
+    void postTransaction_missingFields_returns400WithValidationErrors() {
+        ResponseEntity<Map> resp = post("/accounts/ac6/transactions", "{}");
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> errors = (Map<String, Object>) resp.getBody().get("errors");
+        assertThat(errors).isNotEmpty();
+    }
+
+    @Test
+    void postTransaction_malformedJson_returns400() {
+        ResponseEntity<Map> resp = post("/accounts/ac7/transactions", "{bad json}");
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void postTransaction_withNonBlankTraceId_traceIdPassesThrough() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Trace-Id", "acct-trace-007");
+        ResponseEntity<Map> resp = rest.postForEntity("/accounts/ac8/transactions",
+                new HttpEntity<>(txBody("tx-ac8-e1", "CREDIT", 100, "USD"), headers), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(resp.getHeaders().getFirst("X-Trace-Id")).isEqualTo("acct-trace-007");
+    }
+
+    @Test
+    void postTransaction_withBlankTraceId_newTraceIdGenerated() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Trace-Id", " ");
+        ResponseEntity<Map> resp = rest.postForEntity("/accounts/ac9/transactions",
+                new HttpEntity<>(txBody("tx-ac9-e1", "CREDIT", 100, "USD"), headers), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String traceId = resp.getHeaders().getFirst("X-Trace-Id");
+        assertThat(traceId).isNotBlank();
+        assertThat(traceId).isNotEqualTo(" ");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

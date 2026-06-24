@@ -1,4 +1,4 @@
-package com.eventledger.gateway;
+package com.eventledger.gateway.controller;
 
 import com.eventledger.gateway.client.AccountServiceClient;
 import com.eventledger.gateway.dto.BalanceResponse;
@@ -84,8 +84,7 @@ class EventControllerTest {
 
     @Test
     void postEvent_missingRequiredFields_returns400WithFieldErrors() {
-        ResponseEntity<Map> resp = post("/events",
-                "{\"type\":\"CREDIT\",\"amount\":100}");
+        ResponseEntity<Map> resp = post("/events", "{\"type\":\"CREDIT\",\"amount\":100}");
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         @SuppressWarnings("unchecked")
         Map<String, Object> errors = (Map<String, Object>) resp.getBody().get("errors");
@@ -114,7 +113,6 @@ class EventControllerTest {
 
     @Test
     void outOfOrder_threeEventsSubmittedOutOfChronologicalOrder_listReturnsSortedByTimestamp() {
-        // Submit in reverse chronological order: March, January, February
         post("/events", eventBody("oo-evt-c", "acct-oo", "2024-03-01T00:00:00Z"));
         post("/events", eventBody("oo-evt-a", "acct-oo", "2024-01-01T00:00:00Z"));
         post("/events", eventBody("oo-evt-b", "acct-oo", "2024-02-01T00:00:00Z"));
@@ -122,7 +120,6 @@ class EventControllerTest {
         ResponseEntity<Object[]> resp = rest.getForEntity("/events?account=acct-oo", Object[].class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).hasSize(3);
-        // Expect ascending timestamp order: Jan → Feb → Mar
         assertThat(((Map<?, ?>) resp.getBody()[0]).get("eventId")).isEqualTo("oo-evt-a");
         assertThat(((Map<?, ?>) resp.getBody()[1]).get("eventId")).isEqualTo("oo-evt-b");
         assertThat(((Map<?, ?>) resp.getBody()[2]).get("eventId")).isEqualTo("oo-evt-c");
@@ -168,6 +165,26 @@ class EventControllerTest {
         ResponseEntity<Map> resp = post("/events", body);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(resp.getBody().get("metadata")).isInstanceOf(Map.class);
+    }
+
+    @Test
+    void postEvent_malformedJson_returns400() {
+        ResponseEntity<Map> resp = post("/events", "{this is not valid json}");
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void postEvent_withBlankTraceId_gatewayGeneratesNewId() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Trace-Id", " ");
+        ResponseEntity<Map> resp = rest.postForEntity("/events",
+                new HttpEntity<>(eventBody("gw-blank-tr-1", "acct-btr", "2024-01-01T00:00:00Z"),
+                        headers), Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String traceId = resp.getHeaders().getFirst("X-Trace-Id");
+        assertThat(traceId).isNotBlank();
+        assertThat(traceId).isNotEqualTo(" ");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

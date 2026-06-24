@@ -1,5 +1,8 @@
 package com.eventledger.gateway;
 
+import com.eventledger.gateway.client.AccountServiceClient;
+import com.eventledger.gateway.domain.EventType;
+import com.eventledger.gateway.dto.EventRequest;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -7,6 +10,7 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -14,6 +18,8 @@ import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Map;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -45,6 +51,7 @@ class GatewayIntegrationTest {
 
     @Autowired TestRestTemplate rest;
     @Autowired CircuitBreakerRegistry circuitBreakerRegistry;
+    @Autowired AccountServiceClient accountServiceClient;
 
     @BeforeEach
     void resetState() {
@@ -176,6 +183,48 @@ class GatewayIntegrationTest {
         Number balance = (Number) resp.getBody().get("balance");
         assertThat(balance.doubleValue()).isEqualTo(450.0);
         wm.verify(1, getRequestedFor(urlPathMatching("/accounts/bal-acct/balance")));
+    }
+
+    // ── Balance fallback and null-MDC branches ────────────────────────────────
+
+    @Test
+    void balanceProxy_accountServiceReturnsError_returns503() {
+        wm.stubFor(get(urlPathMatching("/accounts/err-bal-acct/balance"))
+                .willReturn(serverError()));
+
+        ResponseEntity<Map> resp = rest.getForEntity("/accounts/err-bal-acct/balance", Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
+    void applyTransaction_nullMdcContext_doesNotSendTraceIdHeader() {
+        wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
+                .willReturn(aResponse().withStatus(201)));
+
+        MDC.clear();
+        EventRequest req = new EventRequest(
+                "mdc-null-evt-1", "mdc-null-acct", EventType.CREDIT,
+                BigDecimal.ONE, "USD", Instant.now(), null);
+
+        AccountServiceClient.block(accountServiceClient.applyTransaction(req));
+
+        wm.verify(postRequestedFor(urlPathMatching("/accounts/mdc-null-acct/transactions"))
+                .withoutHeader("X-Trace-Id"));
+    }
+
+    @Test
+    void getBalance_nullMdcContext_doesNotSendTraceIdHeader() {
+        wm.stubFor(get(urlPathMatching("/accounts/mdc-bal-acct/balance"))
+                .willReturn(okJson(
+                        "{\"accountId\":\"mdc-bal-acct\",\"currency\":\"USD\",\"balance\":0}")));
+
+        MDC.clear();
+
+        AccountServiceClient.block(accountServiceClient.getBalance("mdc-bal-acct"));
+
+        wm.verify(getRequestedFor(urlPathMatching("/accounts/mdc-bal-acct/balance"))
+                .withoutHeader("X-Trace-Id"));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
