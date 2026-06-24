@@ -61,6 +61,49 @@ following JSON. All monetary values are `BigDecimal` — never `double` or
 
 ## Architecture Decisions
 
+### Circuit breaker and per-call timeout on Account Service calls
+
+Every outbound call from the Gateway to the Account Service is wrapped with a
+Resilience4j **CircuitBreaker** and a **TimeLimiter**. The decoration order is:
+CircuitBreaker (outer) → TimeLimiter (inner) → HTTP call.
+
+**Circuit Breaker — `accountService` instance**
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| `sliding-window-size` | 10 | Evaluate the last 10 calls |
+| `failure-rate-threshold` | 50 % | Open after ≥ 50 % failures |
+| `wait-duration-in-open-state` | 30 s | Stay open for 30 s, then move to HALF-OPEN |
+| `permitted-calls-in-half-open` | 3 | Allow 3 probe calls to test recovery |
+
+**Time Limiter — `accountService` instance**
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| `timeout-duration` | 5 s | Hard deadline per call; exceeded → `TimeoutException` |
+| `cancel-running-future` | true | Interrupt the thread when the deadline fires |
+
+**Why a circuit breaker?**
+
+Without it, every `POST /events` while the Account Service is down blocks a
+thread for up to 5 s waiting for the timeout. Under load that exhausts the
+thread pool and takes down the Gateway too. The circuit breaker short-circuits
+immediately with a `CallNotPermittedException` the moment the breaker is OPEN,
+so the Gateway stays responsive and returns `503` in microseconds rather than
+stacking up blocked threads.
+
+**Failure path**
+
+| Condition | Exception | Response |
+|---|---|---|
+| Circuit is OPEN | `CallNotPermittedException` | 503 — circuit breaker is open |
+| Call exceeds 5 s | `TimeoutException` | 503 — call timed out |
+| Network / HTTP error | `RestClientException` | 503 — Account Service unavailable |
+
+The `GET /events/{id}` and `GET /events?account={id}` endpoints read from the
+Gateway's own database and are not affected by any of the above — they keep
+working regardless of the Account Service state.
+
 ### POST /events — account-first write order
 
 When the Gateway receives a new event it must apply the financial transaction

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 @RestController
 @RequestMapping("/accounts")
@@ -21,7 +22,7 @@ public class BalanceController {
     }
 
     @GetMapping("/{id}/balance")
-    public ResponseEntity<BalanceResponse> getBalance(@PathVariable UUID id) {
-        return ResponseEntity.ok(accountServiceClient.getBalance(id));
+    public CompletableFuture<ResponseEntity<BalanceResponse>> getBalance(@PathVariable UUID id) {
+        return accountServiceClient.getBalance(id).thenApply(ResponseEntity::ok);
     }
 }

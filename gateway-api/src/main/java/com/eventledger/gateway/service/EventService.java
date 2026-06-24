@@ -4,6 +4,8 @@ import com.eventledger.gateway.client.AccountServiceClient;
 import com.eventledger.gateway.domain.Event;
 import com.eventledger.gateway.dto.EventRequest;
 import com.eventledger.gateway.repository.EventRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -19,10 +21,14 @@ public class EventService {
 
     private final EventRepository repository;
     private final AccountServiceClient accountServiceClient;
+    private final MeterRegistry meterRegistry;
 
-    public EventService(EventRepository repository, AccountServiceClient accountServiceClient) {
-        this.repository = repository;
+    public EventService(EventRepository repository,
+                        AccountServiceClient accountServiceClient,
+                        MeterRegistry meterRegistry) {
+        this.repository           = repository;
         this.accountServiceClient = accountServiceClient;
+        this.meterRegistry        = meterRegistry;
     }
 
     public String computeFingerprint(EventRequest req) {
@@ -43,8 +49,15 @@ public class EventService {
     }
 
     public Event save(EventRequest req, String fingerprint) {
-        accountServiceClient.applyTransaction(req);
-        return repository.save(new Event(
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            AccountServiceClient.block(accountServiceClient.applyTransaction(req));
+        } finally {
+            sample.stop(meterRegistry.timer("account.service.call.duration",
+                    "outcome", "completed"));
+        }
+
+        Event saved = repository.save(new Event(
                 req.eventId(),
                 req.accountId(),
                 req.type(),
@@ -54,6 +67,9 @@ public class EventService {
                 req.metadata(),
                 fingerprint
         ));
+
+        meterRegistry.counter("events.submitted", "type", req.type().name()).increment();
+        return saved;
     }
 
     public Optional<Event> findById(UUID id) {
