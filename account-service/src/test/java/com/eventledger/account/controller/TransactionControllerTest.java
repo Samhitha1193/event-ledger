@@ -85,30 +85,6 @@ class TransactionControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
-    @Test
-    void postTransaction_withNonBlankTraceId_traceIdPassesThrough() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("X-Trace-Id", "acct-trace-007");
-        ResponseEntity<Map> resp = rest.postForEntity("/accounts/ac8/transactions",
-                new HttpEntity<>(txBody("tx-ac8-e1", "CREDIT", 100, "USD"), headers), Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(resp.getHeaders().getFirst("X-Trace-Id")).isEqualTo("acct-trace-007");
-    }
-
-    @Test
-    void postTransaction_withBlankTraceId_newTraceIdGenerated() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("X-Trace-Id", " ");
-        ResponseEntity<Map> resp = rest.postForEntity("/accounts/ac9/transactions",
-                new HttpEntity<>(txBody("tx-ac9-e1", "CREDIT", 100, "USD"), headers), Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        String traceId = resp.getHeaders().getFirst("X-Trace-Id");
-        assertThat(traceId).isNotBlank();
-        assertThat(traceId).isNotEqualTo(" ");
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private ResponseEntity<Map> post(String url, String json) {

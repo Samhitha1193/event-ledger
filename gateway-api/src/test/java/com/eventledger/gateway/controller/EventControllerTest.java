@@ -32,6 +32,7 @@ class EventControllerTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
     }
 
+
     @Test
     void postEvent_newEvent_returns201() {
         ResponseEntity<Map> resp = post("/events", eventBody("gw-evt-1", "acct-a", "2024-01-01T00:00:00Z"));
@@ -171,20 +172,6 @@ class EventControllerTest {
     void postEvent_malformedJson_returns400() {
         ResponseEntity<Map> resp = post("/events", "{this is not valid json}");
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-    }
-
-    @Test
-    void postEvent_withBlankTraceId_gatewayGeneratesNewId() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("X-Trace-Id", " ");
-        ResponseEntity<Map> resp = rest.postForEntity("/events",
-                new HttpEntity<>(eventBody("gw-blank-tr-1", "acct-btr", "2024-01-01T00:00:00Z"),
-                        headers), Map.class);
-        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        String traceId = resp.getHeaders().getFirst("X-Trace-Id");
-        assertThat(traceId).isNotBlank();
-        assertThat(traceId).isNotEqualTo(" ");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -19,6 +21,8 @@ import java.util.Optional;
 
 @Service
 public class EventService {
+
+    private static final Logger log = LoggerFactory.getLogger(EventService.class);
 
     private final EventRepository repository;
     private final AccountServiceClient accountServiceClient;
@@ -82,6 +86,8 @@ public class EventService {
         ));
 
         meterRegistry.counter("events.submitted", "type", req.type().name()).increment();
+        log.info("Event accepted eventId={} accountId={} type={} amount={} currency={}",
+                req.eventId(), req.accountId(), req.type(), req.amount(), req.currency());
         return saved;
     }
 

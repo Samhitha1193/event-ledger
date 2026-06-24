@@ -1,8 +1,5 @@
 package com.eventledger.gateway;
 
-import com.eventledger.gateway.client.AccountServiceClient;
-import com.eventledger.gateway.domain.EventType;
-import com.eventledger.gateway.dto.EventRequest;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -10,7 +7,6 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -18,8 +14,6 @@ import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
-import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.Map;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -51,7 +45,6 @@ class GatewayIntegrationTest {
 
     @Autowired TestRestTemplate rest;
     @Autowired CircuitBreakerRegistry circuitBreakerRegistry;
-    @Autowired AccountServiceClient accountServiceClient;
 
     @BeforeEach
     void resetState() {
@@ -90,36 +83,33 @@ class GatewayIntegrationTest {
     // ── Trace propagation ─────────────────────────────────────────────────────
 
     @Test
-    void tracePropagation_customTraceId_echoedAndForwardedToAccountService() {
+    void tracePropagation_incomingTraceparent_sameTraceIdForwardedToAccountService() {
         wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
                 .willReturn(aResponse().withStatus(201)));
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("X-Trace-Id", "trace-abc-123");
+        String traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+        HttpHeaders headers = jsonHeaders();
+        headers.set("traceparent", "00-" + traceId + "-00f067aa0ba902b7-01");
         ResponseEntity<Map> resp = rest.postForEntity("/events",
                 new HttpEntity<>(event("tr-evt-1", "tr-acct"), headers), Map.class);
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        // Gateway echoes the same trace ID in the response
-        assertThat(resp.getHeaders().getFirst("X-Trace-Id")).isEqualTo("trace-abc-123");
-        // The real HTTP call to account-service carried the trace ID header
+        // The same trace ID must propagate gateway → account-service (TraceContextFilter + OTel span inheritance)
         wm.verify(postRequestedFor(urlPathMatching("/accounts/.*/transactions"))
-                .withHeader("X-Trace-Id", WireMock.equalTo("trace-abc-123")));
+                .withHeader("traceparent", WireMock.matching("00-" + traceId + "-[0-9a-f]{16}-0[01]")));
     }
 
     @Test
-    void tracePropagation_noTraceId_gatewayGeneratesAndForwardsToAccountService() {
+    void tracePropagation_noTraceparent_gatewayGeneratesAndForwardsToAccountService() {
         wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
                 .willReturn(aResponse().withStatus(201)));
 
         ResponseEntity<Map> resp = submitEvent(event("tr-evt-gen", "tr-acct-gen"));
 
-        String generated = resp.getHeaders().getFirst("X-Trace-Id");
-        assertThat(generated).isNotBlank();
-        // The generated ID is forwarded to the account-service without modification
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        // A well-formed W3C traceparent must be forwarded even when no incoming trace context exists
         wm.verify(postRequestedFor(urlPathMatching("/accounts/.*/transactions"))
-                .withHeader("X-Trace-Id", WireMock.equalTo(generated)));
+                .withHeader("traceparent", WireMock.matching("00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]")));
     }
 
     // ── Resiliency ────────────────────────────────────────────────────────────
@@ -185,7 +175,7 @@ class GatewayIntegrationTest {
         wm.verify(1, getRequestedFor(urlPathMatching("/accounts/bal-acct/balance")));
     }
 
-    // ── Balance fallback and null-MDC branches ────────────────────────────────
+    // ── Balance fallback ──────────────────────────────────────────────────────
 
     @Test
     void balanceProxy_accountServiceReturnsError_returns503() {
@@ -197,42 +187,18 @@ class GatewayIntegrationTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     }
 
-    @Test
-    void applyTransaction_nullMdcContext_doesNotSendTraceIdHeader() {
-        wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
-                .willReturn(aResponse().withStatus(201)));
-
-        MDC.clear();
-        EventRequest req = new EventRequest(
-                "mdc-null-evt-1", "mdc-null-acct", EventType.CREDIT,
-                BigDecimal.ONE, "USD", Instant.now(), null);
-
-        AccountServiceClient.block(accountServiceClient.applyTransaction(req));
-
-        wm.verify(postRequestedFor(urlPathMatching("/accounts/mdc-null-acct/transactions"))
-                .withoutHeader("X-Trace-Id"));
-    }
-
-    @Test
-    void getBalance_nullMdcContext_doesNotSendTraceIdHeader() {
-        wm.stubFor(get(urlPathMatching("/accounts/mdc-bal-acct/balance"))
-                .willReturn(okJson(
-                        "{\"accountId\":\"mdc-bal-acct\",\"currency\":\"USD\",\"balance\":0}")));
-
-        MDC.clear();
-
-        AccountServiceClient.block(accountServiceClient.getBalance("mdc-bal-acct"));
-
-        wm.verify(getRequestedFor(urlPathMatching("/accounts/mdc-bal-acct/balance"))
-                .withoutHeader("X-Trace-Id"));
-    }
-
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private ResponseEntity<Map> submitEvent(String json) {
         HttpHeaders h = new HttpHeaders();
         h.setContentType(MediaType.APPLICATION_JSON);
         return rest.postForEntity("/events", new HttpEntity<>(json, h), Map.class);
+    }
+
+    private HttpHeaders jsonHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        return h;
     }
 
     private String event(String eventId, String accountId) {

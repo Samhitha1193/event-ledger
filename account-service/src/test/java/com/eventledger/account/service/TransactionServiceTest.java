@@ -6,9 +6,10 @@ import com.eventledger.account.domain.TransactionType;
 import com.eventledger.account.dto.TransactionRequest;
 import com.eventledger.account.repository.AccountRepository;
 import com.eventledger.account.repository.TransactionRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -28,12 +29,18 @@ class TransactionServiceTest {
 
     @Mock AccountRepository accountRepository;
     @Mock TransactionRepository transactionRepository;
-    @InjectMocks TransactionService transactionService;
+    TransactionService transactionService;
+
+    @BeforeEach
+    void setUp() {
+        transactionService = new TransactionService(accountRepository, transactionRepository, new SimpleMeterRegistry());
+    }
 
     @Test
     void process_duplicateEventId_returnsExistingWithoutCreatingNewOne() {
         Transaction existing = new Transaction();
         existing.setEventId("dup-evt");
+        existing.setType(TransactionType.CREDIT);
         when(transactionRepository.findById("dup-evt")).thenReturn(Optional.of(existing));
 
         TransactionService.ProcessResult result = transactionService.process(

@@ -5,6 +5,7 @@ import com.eventledger.account.domain.Transaction;
 import com.eventledger.account.dto.TransactionRequest;
 import com.eventledger.account.repository.AccountRepository;
 import com.eventledger.account.repository.TransactionRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -19,11 +20,14 @@ public class TransactionService {
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
+    private final MeterRegistry meterRegistry;
 
     public TransactionService(AccountRepository accountRepository,
-                              TransactionRepository transactionRepository) {
+                              TransactionRepository transactionRepository,
+                              MeterRegistry meterRegistry) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     public record ProcessResult(boolean isNew, Transaction transaction, String accountId) {}
@@ -33,6 +37,8 @@ public class TransactionService {
         Transaction existing = transactionRepository.findById(req.getEventId()).orElse(null);
         if (existing != null) {
             log.info("Duplicate event ignored eventId={} accountId={}", req.getEventId(), accountId);
+            meterRegistry.counter("transactions.processed",
+                    "type", existing.getType().name(), "outcome", "duplicate").increment();
             return new ProcessResult(false, existing, accountId);
         }
 
@@ -58,6 +64,8 @@ public class TransactionService {
         tx.setCurrency(req.getCurrency());
         tx.setEventTimestamp(req.getEventTimestamp());
         transactionRepository.save(tx);
+        meterRegistry.counter("transactions.processed",
+                "type", req.getType().name(), "outcome", "new").increment();
         log.info("Transaction saved eventId={} accountId={} type={} amount={} currency={}",
                 req.getEventId(), accountId, req.getType(), req.getAmount(), req.getCurrency());
         return new ProcessResult(true, tx, accountId);

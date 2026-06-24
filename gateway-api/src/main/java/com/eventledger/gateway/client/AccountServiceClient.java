@@ -3,11 +3,12 @@ package com.eventledger.gateway.client;
 import com.eventledger.gateway.dto.AccountTransactionRequest;
 import com.eventledger.gateway.dto.BalanceResponse;
 import com.eventledger.gateway.dto.EventRequest;
-import com.eventledger.gateway.filter.TraceIdFilter;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.timelimiter.annotation.TimeLimiter;
-import org.slf4j.MDC;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -27,14 +28,16 @@ public class AccountServiceClient {
     private final RestClient restClient;
 
     public AccountServiceClient(
-            RestClient.Builder builder,
             @Value("${account.service.url}") String baseUrl,
             @Value("${account.service.connect-timeout-ms:2000}") long connectTimeoutMs) {
 
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
 
-        this.restClient = builder
+        // Build without the auto-configured ObservationRestClientCustomizer — that interceptor
+        // reads the Micrometer Observation from a thread-local that doesn't cross the async
+        // boundary, so it would inject a wrong root-span traceparent. We propagate manually below.
+        this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(factory)
                 .build();
@@ -43,9 +46,9 @@ public class AccountServiceClient {
     @CircuitBreaker(name = "accountService", fallbackMethod = "applyTransactionFallback")
     @TimeLimiter(name = "accountService", fallbackMethod = "applyTransactionFallback")
     public CompletableFuture<Void> applyTransaction(EventRequest req) {
-        // Capture trace ID on the request thread before entering the async boundary —
-        // MDC is thread-local so it is invisible to the ForkJoinPool thread below.
-        String traceId = MDC.get(TraceIdFilter.MDC_KEY);
+        // Capture the OTel context on the request thread before crossing the async boundary —
+        // Context is thread-local and invisible to the ForkJoinPool thread below.
+        Context otelContext = Context.current();
 
         AccountTransactionRequest body = new AccountTransactionRequest(
                 req.eventId(),
@@ -55,14 +58,17 @@ public class AccountServiceClient {
                 req.eventTimestamp()
         );
         return CompletableFuture.supplyAsync(() -> {
-            restClient.post()
-                    .uri("/accounts/{id}/transactions", req.accountId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .headers(h -> { if (traceId != null) h.set(TraceIdFilter.TRACE_HEADER, traceId); })
-                    .body(body)
-                    .retrieve()
-                    .toBodilessEntity();
-            return null;
+            try (Scope scope = otelContext.makeCurrent()) {
+                restClient.post()
+                        .uri("/accounts/{id}/transactions", req.accountId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .headers(h -> W3CTraceContextPropagator.getInstance()
+                                .inject(otelContext, h, (headers, key, value) -> headers.set(key, value)))
+                        .body(body)
+                        .retrieve()
+                        .toBodilessEntity();
+                return null;
+            }
         });
     }
 
@@ -73,14 +79,17 @@ public class AccountServiceClient {
     @CircuitBreaker(name = "accountService", fallbackMethod = "getBalanceFallback")
     @TimeLimiter(name = "accountService", fallbackMethod = "getBalanceFallback")
     public CompletableFuture<BalanceResponse> getBalance(String accountId) {
-        String traceId = MDC.get(TraceIdFilter.MDC_KEY);
-        return CompletableFuture.supplyAsync(() ->
-                restClient.get()
+        Context otelContext = Context.current();
+        return CompletableFuture.supplyAsync(() -> {
+            try (Scope scope = otelContext.makeCurrent()) {
+                return restClient.get()
                         .uri("/accounts/{id}/balance", accountId)
-                        .headers(h -> { if (traceId != null) h.set(TraceIdFilter.TRACE_HEADER, traceId); })
+                        .headers(h -> W3CTraceContextPropagator.getInstance()
+                                .inject(otelContext, h, (headers, key, value) -> headers.set(key, value)))
                         .retrieve()
-                        .body(BalanceResponse.class)
-        );
+                        .body(BalanceResponse.class);
+            }
+        });
     }
 
     CompletableFuture<BalanceResponse> getBalanceFallback(String accountId, Throwable t) {
