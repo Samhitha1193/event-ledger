@@ -45,7 +45,7 @@ Client
 - Detects duplicate submissions via a SHA-256 fingerprint of the payload; returns `200 OK` for identical re-submissions and `409 Conflict` for the same `eventId` with a different payload
 - Calls the Account Service to apply the financial transaction *before* writing to its own database, so the gateway never records a phantom event
 - Proxies `GET /accounts/{id}/balance` to the Account Service
-- Propagates `X-Trace-Id` from the inbound request (or generates one) to every outbound call and back to the response
+- Propagates the W3C `traceparent` header from the inbound request (or generates one via Micrometer Tracing) to every outbound call to the Account Service
 
 **account-service** is the balance ledger. It:
 - Auto-creates an account on the first transaction (no pre-registration required)
@@ -144,11 +144,11 @@ Both services use in-memory H2 databases that reset on restart.
 Each service has a self-contained test suite that needs no running infrastructure.
 
 ```bash
-# Account Service (7 tests)
+# Account Service (25 tests)
 cd account-service
 mvn test
 
-# Gateway API (23 tests)
+# Gateway API (38 tests)
 cd gateway-api
 mvn test
 ```
@@ -183,8 +183,8 @@ Real HTTP gateway server → real `AccountServiceClient` → WireMock standing i
 |---|---|
 | Full flow | Event is persisted and a real HTTP call reaches the account-service |
 | Idempotency | Duplicate submission hits the DB, account-service called exactly once |
-| Trace (custom) | `X-Trace-Id` sent by client is echoed in the response and forwarded to account-service |
-| Trace (generated) | When no trace ID is supplied, gateway generates one and forwards it |
+| Trace (propagated) | Incoming W3C `traceparent` is forwarded to account-service with the same trace ID |
+| Trace (generated) | When no `traceparent` is supplied, gateway generates one and forwards it |
 | Resiliency | Account-service `500` → gateway `503` |
 | Circuit breaker | Five consecutive failures open the breaker; the sixth call is rejected immediately without reaching WireMock |
 | TimeLimiter | A 2 s account-service delay exceeds the 1 s timeout → `503` |
@@ -282,9 +282,12 @@ CLOSED ──────────────► OPEN ──── 30 s ─�
 
 Both services emit **ECS-formatted JSON logs** (`logging.structured.format.console=ecs`). Every log line includes the `traceId` from MDC so all log entries for a single request can be correlated across both services.
 
-The gateway additionally records:
+**gateway-api** records:
 - `events.submitted` counter (tagged by `type`) via Micrometer
 - `account.service.call.duration` timer
+
+**account-service** records:
+- `transactions.processed` counter (tagged by `type` and `outcome`: `new` or `duplicate`)
 
 Actuator endpoints are exposed at the service root (`management.endpoints.web.base-path=/`):
 
@@ -293,3 +296,16 @@ GET /health    # liveness + component details
 GET /metrics   # Micrometer metrics
 GET /info
 ```
+
+---
+
+## API contracts (OpenAPI)
+
+Both services expose a machine-readable OpenAPI 3 spec generated automatically by springdoc-openapi.
+
+| Service | JSON spec | Swagger UI |
+|---|---|---|
+| gateway-api | http://localhost:8080/v3/api-docs | http://localhost:8080/swagger-ui.html |
+| account-service | http://localhost:8081/v3/api-docs | http://localhost:8081/swagger-ui.html |
+
+The account-service spec documents the internal contract consumed by the gateway (`POST /accounts/{id}/transactions`, `GET /accounts/{id}/balance`, `GET /accounts/{id}`). The gateway spec documents the public-facing API.
