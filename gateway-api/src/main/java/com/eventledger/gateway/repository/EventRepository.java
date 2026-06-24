@@ -4,9 +4,8 @@ import com.eventledger.gateway.domain.Event;
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
-public interface EventRepository extends JpaRepository<Event, UUID> {
+public interface EventRepository extends JpaRepository<Event, String> {
     Optional<Event> findByPayloadFingerprint(String payloadFingerprint);
-    List<Event> findByAccountIdOrderByEventTimestampAscEventIdAsc(UUID accountId);
+    List<Event> findByAccountIdOrderByEventTimestampAscEventIdAsc(String accountId);
 }

@@ -7,7 +7,7 @@ import java.time.Instant;
 
 public record TransactionResponse(
         String eventId,
-        Long accountId,
+        String accountId,
         TransactionType type,
         BigDecimal amount,
         String currency,

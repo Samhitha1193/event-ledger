@@ -9,7 +9,6 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.UUID;
 
 @Entity
 @Table(
@@ -20,10 +19,10 @@ public class Event {
 
     @Id
     @Column(name = "event_id", updatable = false, nullable = false)
-    private UUID eventId;
+    private String eventId;
 
     @Column(name = "account_id", nullable = false, updatable = false)
-    private UUID accountId;
+    private String accountId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, updatable = false)
@@ -46,7 +45,7 @@ public class Event {
 
     protected Event() {}
 
-    public Event(UUID eventId, UUID accountId, EventType type, BigDecimal amount,
+    public Event(String eventId, String accountId, EventType type, BigDecimal amount,
                  String currency, Instant eventTimestamp, String metadata, String payloadFingerprint) {
         this.eventId = eventId;
         this.accountId = accountId;
@@ -58,12 +57,12 @@ public class Event {
         this.payloadFingerprint = payloadFingerprint;
     }
 
-    public UUID getEventId()             { return eventId; }
-    public UUID getAccountId()           { return accountId; }
-    public EventType getType()           { return type; }
-    public BigDecimal getAmount()        { return amount; }
-    public String getCurrency()          { return currency; }
-    public Instant getEventTimestamp()   { return eventTimestamp; }
-    public String getMetadata()          { return metadata; }
-    public String getPayloadFingerprint(){ return payloadFingerprint; }
+    public String getEventId()            { return eventId; }
+    public String getAccountId()          { return accountId; }
+    public EventType getType()            { return type; }
+    public BigDecimal getAmount()         { return amount; }
+    public String getCurrency()           { return currency; }
+    public Instant getEventTimestamp()    { return eventTimestamp; }
+    public String getMetadata()           { return metadata; }
+    public String getPayloadFingerprint() { return payloadFingerprint; }
 }

@@ -6,14 +6,13 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.UUID;
 
 public record EventRequest(
-        @NotNull(message = "eventId is required")
-        UUID eventId,
+        @NotBlank(message = "eventId is required")
+        String eventId,
 
-        @NotNull(message = "accountId is required")
-        UUID accountId,
+        @NotBlank(message = "accountId is required")
+        String accountId,
 
         @NotNull(message = "type is required")
         EventType type,
@@ -28,5 +27,5 @@ public record EventRequest(
         @NotNull(message = "eventTimestamp is required")
         Instant eventTimestamp,
 
-        String metadata
+        Object metadata
 ) {}

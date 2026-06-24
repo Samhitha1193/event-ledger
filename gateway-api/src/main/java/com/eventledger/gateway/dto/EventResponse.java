@@ -1,18 +1,18 @@
 package com.eventledger.gateway.dto;
 
 import com.eventledger.gateway.domain.Event;
+import com.fasterxml.jackson.annotation.JsonRawValue;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.UUID;
 
 public record EventResponse(
-        UUID eventId,
-        UUID accountId,
+        String eventId,
+        String accountId,
         String type,
         BigDecimal amount,
         String currency,
         Instant eventTimestamp,
-        String metadata,
+        @JsonRawValue String metadata,
         String payloadFingerprint
 ) {
     public static EventResponse from(Event event) {

@@ -17,7 +17,6 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeoutException;
@@ -49,7 +48,7 @@ public class AccountServiceClient {
         String traceId = MDC.get(TraceIdFilter.MDC_KEY);
 
         AccountTransactionRequest body = new AccountTransactionRequest(
-                req.eventId().toString(),
+                req.eventId(),
                 req.type().name(),
                 req.amount(),
                 req.currency(),
@@ -73,7 +72,7 @@ public class AccountServiceClient {
 
     @CircuitBreaker(name = "accountService", fallbackMethod = "getBalanceFallback")
     @TimeLimiter(name = "accountService", fallbackMethod = "getBalanceFallback")
-    public CompletableFuture<BalanceResponse> getBalance(UUID accountId) {
+    public CompletableFuture<BalanceResponse> getBalance(String accountId) {
         String traceId = MDC.get(TraceIdFilter.MDC_KEY);
         return CompletableFuture.supplyAsync(() ->
                 restClient.get()
@@ -84,7 +83,7 @@ public class AccountServiceClient {
         );
     }
 
-    CompletableFuture<BalanceResponse> getBalanceFallback(UUID accountId, Throwable t) {
+    CompletableFuture<BalanceResponse> getBalanceFallback(String accountId, Throwable t) {
         return CompletableFuture.failedFuture(toUnavailable(t));
     }
 

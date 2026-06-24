@@ -13,7 +13,7 @@ import java.util.List;
 public interface TransactionRepository extends JpaRepository<Transaction, String> {
 
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.account.id = :accountId AND t.type = :type")
-    BigDecimal sumAmountByAccountIdAndType(@Param("accountId") Long accountId, @Param("type") TransactionType type);
+    BigDecimal sumAmountByAccountIdAndType(@Param("accountId") String accountId, @Param("type") TransactionType type);
 
-    List<Transaction> findByAccount_IdOrderByEventTimestampDesc(Long accountId, Pageable pageable);
+    List<Transaction> findByAccount_IdOrderByEventTimestampDesc(String accountId, Pageable pageable);
 }

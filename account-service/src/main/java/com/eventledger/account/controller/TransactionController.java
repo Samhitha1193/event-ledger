@@ -21,7 +21,7 @@ public class TransactionController {
 
     @PostMapping("/{id}/transactions")
     public ResponseEntity<TransactionResponse> createTransaction(
-            @PathVariable Long id,
+            @PathVariable String id,
             @Valid @RequestBody TransactionRequest request) {
         ProcessResult result = transactionService.process(id, request);
         TransactionResponse body = toResponse(result.transaction(), result.accountId());
@@ -30,7 +30,7 @@ public class TransactionController {
                 : ResponseEntity.ok(body);
     }
 
-    private TransactionResponse toResponse(Transaction tx, Long accountId) {
+    private TransactionResponse toResponse(Transaction tx, String accountId) {
         return new TransactionResponse(
                 tx.getEventId(),
                 accountId,

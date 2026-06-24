@@ -26,19 +26,22 @@ public class TransactionService {
         this.transactionRepository = transactionRepository;
     }
 
-    public record ProcessResult(boolean isNew, Transaction transaction, Long accountId) {}
+    public record ProcessResult(boolean isNew, Transaction transaction, String accountId) {}
 
     @Transactional
-    public ProcessResult process(Long accountId, TransactionRequest req) {
+    public ProcessResult process(String accountId, TransactionRequest req) {
         Transaction existing = transactionRepository.findById(req.getEventId()).orElse(null);
         if (existing != null) {
             log.info("Duplicate event ignored eventId={} accountId={}", req.getEventId(), accountId);
             return new ProcessResult(false, existing, accountId);
         }
 
-        Account account = accountRepository.findById(accountId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "Account not found: " + accountId));
+        Account account = accountRepository.findById(accountId).orElseGet(() -> {
+            Account newAccount = new Account();
+            newAccount.setId(accountId);
+            newAccount.setCurrency(req.getCurrency());
+            return accountRepository.save(newAccount);
+        });
 
         if (!account.getCurrency().equals(req.getCurrency())) {
             throw new ResponseStatusException(

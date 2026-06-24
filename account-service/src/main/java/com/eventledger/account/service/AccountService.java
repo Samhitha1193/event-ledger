@@ -35,13 +35,13 @@ public class AccountService {
     }
 
     @Transactional(readOnly = true)
-    public BalanceResponse getBalance(Long accountId) {
+    public BalanceResponse getBalance(String accountId) {
         Account account = findOrThrow(accountId);
         return new BalanceResponse(accountId, account.getCurrency(), computeBalance(accountId));
     }
 
     @Transactional(readOnly = true)
-    public AccountResponse getAccount(Long accountId) {
+    public AccountResponse getAccount(String accountId) {
         Account account = findOrThrow(accountId);
 
         List<TransactionSummary> recent = transactionRepository
@@ -56,7 +56,7 @@ public class AccountService {
         return new AccountResponse(accountId, account.getCurrency(), computeBalance(accountId), recent);
     }
 
-    private BigDecimal computeBalance(Long accountId) {
+    private BigDecimal computeBalance(String accountId) {
         BigDecimal credits = transactionRepository.sumAmountByAccountIdAndType(accountId, TransactionType.CREDIT);
         BigDecimal debits  = transactionRepository.sumAmountByAccountIdAndType(accountId, TransactionType.DEBIT);
         BigDecimal balance = credits.subtract(debits);
@@ -64,7 +64,7 @@ public class AccountService {
         return balance;
     }
 
-    private Account findOrThrow(Long accountId) {
+    private Account findOrThrow(String accountId) {
         return accountRepository.findById(accountId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Account not found: " + accountId));

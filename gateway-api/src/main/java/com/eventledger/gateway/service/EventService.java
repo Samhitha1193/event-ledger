@@ -4,6 +4,8 @@ import com.eventledger.gateway.client.AccountServiceClient;
 import com.eventledger.gateway.domain.Event;
 import com.eventledger.gateway.dto.EventRequest;
 import com.eventledger.gateway.repository.EventRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Service;
@@ -14,7 +16,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 @Service
 public class EventService {
@@ -22,19 +23,22 @@ public class EventService {
     private final EventRepository repository;
     private final AccountServiceClient accountServiceClient;
     private final MeterRegistry meterRegistry;
+    private final ObjectMapper objectMapper;
 
     public EventService(EventRepository repository,
                         AccountServiceClient accountServiceClient,
-                        MeterRegistry meterRegistry) {
+                        MeterRegistry meterRegistry,
+                        ObjectMapper objectMapper) {
         this.repository           = repository;
         this.accountServiceClient = accountServiceClient;
         this.meterRegistry        = meterRegistry;
+        this.objectMapper         = objectMapper;
     }
 
     public String computeFingerprint(EventRequest req) {
         String raw = String.join("|",
-                req.eventId().toString(),
-                req.accountId().toString(),
+                req.eventId(),
+                req.accountId(),
                 req.type().name(),
                 req.amount().stripTrailingZeros().toPlainString(),
                 req.currency(),
@@ -57,6 +61,15 @@ public class EventService {
                     "outcome", "completed"));
         }
 
+        String metadataJson = null;
+        if (req.metadata() != null) {
+            try {
+                metadataJson = objectMapper.writeValueAsString(req.metadata());
+            } catch (JsonProcessingException e) {
+                throw new IllegalArgumentException("Invalid metadata", e);
+            }
+        }
+
         Event saved = repository.save(new Event(
                 req.eventId(),
                 req.accountId(),
@@ -64,7 +77,7 @@ public class EventService {
                 req.amount(),
                 req.currency(),
                 req.eventTimestamp(),
-                req.metadata(),
+                metadataJson,
                 fingerprint
         ));
 
@@ -72,11 +85,11 @@ public class EventService {
         return saved;
     }
 
-    public Optional<Event> findById(UUID id) {
+    public Optional<Event> findById(String id) {
         return repository.findById(id);
     }
 
-    public List<Event> findByAccountId(UUID accountId) {
+    public List<Event> findByAccountId(String accountId) {
         return repository.findByAccountIdOrderByEventTimestampAscEventIdAsc(accountId);
     }
 }

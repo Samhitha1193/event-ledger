@@ -7,13 +7,14 @@ import jakarta.persistence.*;
 public class Account {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(nullable = false)
+    private String id;
 
     @Column(nullable = false, length = 3)
     private String currency;
 
-    public Long getId() { return id; }
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
     public String getCurrency() { return currency; }
 

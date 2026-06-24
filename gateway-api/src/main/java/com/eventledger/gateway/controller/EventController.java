@@ -18,7 +18,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/events")
@@ -51,7 +50,7 @@ public class EventController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<EventResponse> getById(@PathVariable UUID id) {
+    public ResponseEntity<EventResponse> getById(@PathVariable String id) {
         return eventService.findById(id)
                 .map(EventResponse::from)
                 .map(ResponseEntity::ok)
@@ -60,7 +59,7 @@ public class EventController {
     }
 
     @GetMapping
-    public ResponseEntity<List<EventResponse>> listByAccount(@RequestParam("account") UUID accountId) {
+    public ResponseEntity<List<EventResponse>> listByAccount(@RequestParam("account") String accountId) {
         List<EventResponse> events = eventService.findByAccountId(accountId).stream()
                 .map(EventResponse::from)
                 .toList();

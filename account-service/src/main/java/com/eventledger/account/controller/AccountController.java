@@ -16,12 +16,12 @@ public class AccountController {
     }
 
     @GetMapping("/{id}/balance")
-    public BalanceResponse getBalance(@PathVariable Long id) {
+    public BalanceResponse getBalance(@PathVariable String id) {
         return accountService.getBalance(id);
     }
 
     @GetMapping("/{id}")
-    public AccountResponse getAccount(@PathVariable Long id) {
+    public AccountResponse getAccount(@PathVariable String id) {
         return accountService.getAccount(id);
     }
 }
