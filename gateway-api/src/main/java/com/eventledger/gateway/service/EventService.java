@@ -10,7 +10,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class EventService {
@@ -54,7 +56,11 @@ public class EventService {
         ));
     }
 
-    public Optional<Event> findById(java.util.UUID id) {
+    public Optional<Event> findById(UUID id) {
         return repository.findById(id);
+    }
+
+    public List<Event> findByAccountId(UUID accountId) {
+        return repository.findByAccountIdOrderByEventTimestampAscEventIdAsc(accountId);
     }
 }
