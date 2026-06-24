@@ -101,7 +101,9 @@ public class AccountServiceClient {
             return future.join();
         } catch (CompletionException e) {
             Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException re) throw re;
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
             throw new RuntimeException(cause);
         }
     }

@@ -39,6 +39,14 @@ class AccountControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
+    @Test
+    void health_returnsUpWithDatabaseDetails() {
+        ResponseEntity<Map> resp = rest.getForEntity("/health", Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("status", "UP");
+        assertThat(resp.getBody()).containsKey("components");
+    }
+
     private ResponseEntity<Map> post(String url, String json) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);

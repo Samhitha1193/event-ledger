@@ -6,8 +6,13 @@ import com.eventledger.account.dto.TransactionResponse;
 import com.eventledger.account.service.TransactionService;
 import com.eventledger.account.service.TransactionService.ProcessResult;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/accounts")
@@ -26,7 +31,7 @@ public class TransactionController {
         ProcessResult result = transactionService.process(id, request);
         TransactionResponse body = toResponse(result.transaction(), result.accountId());
         return result.isNew()
-                ? ResponseEntity.status(201).body(body)
+                ? ResponseEntity.status(HttpStatus.CREATED).body(body)
                 : ResponseEntity.ok(body);
     }
 

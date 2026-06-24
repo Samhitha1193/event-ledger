@@ -174,6 +174,29 @@ class EventControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
+    @Test
+    void postEvent_unknownType_returns400() {
+        ResponseEntity<Map> resp = post("/events",
+                "{\"eventId\":\"gw-badtype\",\"accountId\":\"acct-bt\",\"type\":\"PAYMENT\"," +
+                "\"amount\":100,\"currency\":\"USD\",\"eventTimestamp\":\"2024-01-01T00:00:00Z\"}");
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void listEvents_accountWithNoEvents_returnsEmptyList() {
+        ResponseEntity<Object[]> resp = rest.getForEntity("/events?account=no-such-account", Object[].class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).isEmpty();
+    }
+
+    @Test
+    void health_returnsUpWithDatabaseDetails() {
+        ResponseEntity<Map> resp = rest.getForEntity("/health", Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("status", "UP");
+        assertThat(resp.getBody()).containsKey("components");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private ResponseEntity<Map> post(String url, String json) {

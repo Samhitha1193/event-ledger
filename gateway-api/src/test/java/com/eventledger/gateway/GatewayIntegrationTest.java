@@ -175,6 +175,30 @@ class GatewayIntegrationTest {
         wm.verify(1, getRequestedFor(urlPathMatching("/accounts/bal-acct/balance")));
     }
 
+    // ── Graceful degradation ──────────────────────────────────────────────────
+
+    @Test
+    void gracefulDegradation_getEndpointsWorkWhenAccountServiceIsDown() {
+        // Store an event while account service is reachable
+        wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
+                .willReturn(aResponse().withStatus(201)));
+        submitEvent(event("degrade-evt", "degrade-acct"));
+
+        // Drop all stubs — any unexpected call to WireMock now returns 404
+        wm.resetAll();
+
+        // GET /events/{id} must still return 200; it reads only from Gateway's own DB
+        ResponseEntity<Map> byId = rest.getForEntity("/events/degrade-evt", Map.class);
+        assertThat(byId.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(byId.getBody()).containsEntry("eventId", "degrade-evt");
+
+        // GET /events?account=... must also return 200 for the same reason
+        ResponseEntity<Object[]> byAccount = rest.getForEntity(
+                "/events?account=degrade-acct", Object[].class);
+        assertThat(byAccount.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(byAccount.getBody()).hasSize(1);
+    }
+
     // ── Balance fallback ──────────────────────────────────────────────────────
 
     @Test

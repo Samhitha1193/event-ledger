@@ -85,6 +85,21 @@ class TransactionControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
+    @Test
+    void postTransaction_zeroAmount_returns400() {
+        ResponseEntity<Map> resp = post("/accounts/ac8/transactions",
+                txBody("tx-ac8-e1", "CREDIT", 0, "USD"));
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void postTransaction_negativeAmount_returns400() {
+        ResponseEntity<Map> resp = post("/accounts/ac9/transactions",
+                "{\"eventId\":\"tx-ac9-e1\",\"type\":\"CREDIT\",\"amount\":-50," +
+                "\"currency\":\"USD\",\"eventTimestamp\":\"2024-01-01T00:00:00Z\"}");
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private ResponseEntity<Map> post(String url, String json) {
