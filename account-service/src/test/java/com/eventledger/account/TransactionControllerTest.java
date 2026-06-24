@@ -59,6 +59,18 @@ class TransactionControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
+    @Test
+    void outOfOrder_debitArrivesBeforeCredit_balanceReflectsBothRegardlessOfArrivalOrder() {
+        // DEBIT arrives first even though the credit happened "first" in business time
+        post("/accounts/ac5/transactions", txBody("tx-ac5-e2", "DEBIT", 100, "USD"));
+        post("/accounts/ac5/transactions", txBody("tx-ac5-e1", "CREDIT", 300, "USD"));
+
+        ResponseEntity<Map> resp = rest.getForEntity("/accounts/ac5/balance", Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Number balance = (Number) resp.getBody().get("balance");
+        assertThat(balance.doubleValue()).isEqualTo(200.0); // 300 credit − 100 debit
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private ResponseEntity<Map> post(String url, String json) {

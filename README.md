@@ -1,165 +1,295 @@
-# event-ledger
+# Event Ledger
 
-Two independent Spring Boot 3 / Java 21 services sharing a single repository.
+Two independent Spring Boot 3 / Java 21 microservices that together form a financial event ledger.
 
-## Services
+---
 
-| Service           | Port | Description              |
-|-------------------|------|--------------------------|
-| `gateway-api`     | 8080 | Inbound event API        |
-| `account-service` | 8081 | Account & balance ledger |
+## Architecture
 
-## Endpoints
-
-### gateway-api (port 8080)
-
-| Method | Path                       | Description                        |
-|--------|----------------------------|------------------------------------|
-| POST   | `/events`                  | Submit a new event                 |
-| GET    | `/events/{id}`             | Fetch a single event by ID         |
-| GET    | `/events?account={id}`     | List all events for an account     |
-| GET    | `/health`                  | Health check                       |
-
-### account-service (port 8081)
-
-| Method | Path                            | Description                        |
-|--------|---------------------------------|------------------------------------|
-| POST   | `/accounts/{id}/transactions`   | Post a transaction to an account   |
-| GET    | `/accounts/{id}/balance`        | Get current balance for an account |
-| GET    | `/accounts/{id}`                | Get account details                |
-| GET    | `/health`                       | Health check                       |
-
-## Internal Event Payload
-
-When the gateway forwards an event to the account service it sends the
-following JSON. All monetary values are `BigDecimal` — never `double` or
-`float`.
-
-```json
-{
-  "eventId":        "a1b2c3d4-...",
-  "accountId":      "acc-001",
-  "type":           "CREDIT",
-  "amount":         "150.00",
-  "currency":       "USD",
-  "eventTimestamp": "2026-06-23T10:15:30Z"
-}
+```
+Client
+  │
+  │  POST /events          GET /events/{id}
+  │  GET  /events?account  GET /accounts/{id}/balance
+  ▼
+┌─────────────────────────────────────────────────────┐
+│                    gateway-api :8080                 │
+│                                                      │
+│  EventController  ──► EventService                  │
+│  BalanceController                                   │
+│                    ├── EventRepository (H2)         │
+│                    │   Stores events + fingerprints │
+│                    │                                 │
+│                    └── AccountServiceClient          │
+│                        CircuitBreaker + TimeLimiter  │
+└────────────────────────┬────────────────────────────┘
+                         │ POST /accounts/{id}/transactions
+                         │ GET  /accounts/{id}/balance
+                         │ (HTTP + X-Trace-Id header)
+                         ▼
+┌─────────────────────────────────────────────────────┐
+│                 account-service :8081                │
+│                                                      │
+│  TransactionController ──► TransactionService       │
+│  AccountController     ──► AccountService           │
+│                                                      │
+│  AccountRepository  (H2)  ── auto-created on first  │
+│  TransactionRepository     ── transaction per acct  │
+└─────────────────────────────────────────────────────┘
 ```
 
-| Field            | Type           | Notes                                    |
-|------------------|----------------|------------------------------------------|
-| `eventId`        | `String`       | UUID of the originating event            |
-| `accountId`      | `String`       | Target account identifier                |
-| `type`           | `String`       | `CREDIT` or `DEBIT`                      |
-| `amount`         | `BigDecimal`   | Serialized as a string to preserve scale |
-| `currency`       | `String`       | ISO 4217 code (e.g. `USD`)               |
-| `eventTimestamp` | `String`       | ISO 8601 UTC timestamp                   |
+### Service responsibilities
 
-> **Money rule:** use `java.math.BigDecimal` for every monetary field in both
-> services. Never use `double` or `float` — they cannot represent decimal
-> fractions exactly and will silently corrupt financial calculations.
+**gateway-api** is the public-facing API. It:
+- Validates inbound event requests (field presence, positive amount, known type)
+- Detects duplicate submissions via a SHA-256 fingerprint of the payload; returns `200 OK` for identical re-submissions and `409 Conflict` for the same `eventId` with a different payload
+- Calls the Account Service to apply the financial transaction *before* writing to its own database, so the gateway never records a phantom event
+- Proxies `GET /accounts/{id}/balance` to the Account Service
+- Propagates `X-Trace-Id` from the inbound request (or generates one) to every outbound call and back to the response
 
-## Architecture Decisions
+**account-service** is the balance ledger. It:
+- Auto-creates an account on the first transaction (no pre-registration required)
+- Enforces idempotency on `eventId` — re-posting the same event ID is a no-op
+- Rejects currency mismatches on an existing account (422)
+- Computes balances dynamically (`SUM(credits) − SUM(debits)`) so out-of-order event arrival never corrupts the balance
+- Enforces that a DEBIT cannot exceed the current balance (422)
 
-### Circuit breaker and per-call timeout on Account Service calls
+### Data flow for `POST /events`
 
-Every outbound call from the Gateway to the Account Service is wrapped with a
-Resilience4j **CircuitBreaker** and a **TimeLimiter**. The decoration order is:
-CircuitBreaker (outer) → TimeLimiter (inner) → HTTP call.
+1. Gateway validates the request body (400 on failure)
+2. Gateway computes a SHA-256 fingerprint and looks up `eventId` in its own H2 database
+3. If found and fingerprint matches → `200 OK` (idempotent, no downstream call)
+4. If found and fingerprint differs → `409 Conflict`
+5. If not found → Gateway calls `POST /accounts/{accountId}/transactions` on the Account Service
+6. On account-service success → Gateway persists the event and returns `201 Created`
+7. On account-service failure → Gateway returns `503 Service Unavailable` and saves nothing
 
-**Circuit Breaker — `accountService` instance**
+---
 
-| Parameter | Value | Meaning |
+## Prerequisites
+
+| Dependency | Required for | Minimum version |
 |---|---|---|
-| `sliding-window-size` | 10 | Evaluate the last 10 calls |
-| `failure-rate-threshold` | 50 % | Open after ≥ 50 % failures |
-| `wait-duration-in-open-state` | 30 s | Stay open for 30 s, then move to HALF-OPEN |
-| `permitted-calls-in-half-open` | 3 | Allow 3 probe calls to test recovery |
+| Java (JDK) | Running / testing locally | 21 |
+| Maven | Building / testing locally | 3.9 |
+| Docker + Docker Compose | Container-based startup | Docker 24 / Compose v2 |
 
-**Time Limiter — `accountService` instance**
+Install Java 21 (Temurin):
+```bash
+# macOS
+brew install --cask temurin@21
 
-| Parameter | Value | Meaning |
-|---|---|---|
-| `timeout-duration` | 5 s | Hard deadline per call; exceeded → `TimeoutException` |
-| `cancel-running-future` | true | Interrupt the thread when the deadline fires |
+# or via SDKMAN
+sdk install java 21.0.3-tem
+```
 
-**Why a circuit breaker?**
+Install Maven:
+```bash
+# macOS
+brew install maven
+```
 
-Without it, every `POST /events` while the Account Service is down blocks a
-thread for up to 5 s waiting for the timeout. Under load that exhausts the
-thread pool and takes down the Gateway too. The circuit breaker short-circuits
-immediately with a `CallNotPermittedException` the moment the breaker is OPEN,
-so the Gateway stays responsive and returns `503` in microseconds rather than
-stacking up blocked threads.
+---
 
-**Failure path**
-
-| Condition | Exception | Response |
-|---|---|---|
-| Circuit is OPEN | `CallNotPermittedException` | 503 — circuit breaker is open |
-| Call exceeds 5 s | `TimeoutException` | 503 — call timed out |
-| Network / HTTP error | `RestClientException` | 503 — Account Service unavailable |
-
-The `GET /events/{id}` and `GET /events?account={id}` endpoints read from the
-Gateway's own database and are not affected by any of the above — they keep
-working regardless of the Account Service state.
-
-### POST /events — account-first write order
-
-When the Gateway receives a new event it must apply the financial transaction
-to the Account Service **before** writing anything to its own database.
-
-**Order of operations**
-
-1. Validate the request (400 if invalid).
-2. Look up `event_id` in the Gateway database to detect duplicates.
-3. **Call `POST /accounts/{accountId}/transactions` on the Account Service.**
-4. Only if that call returns 2xx: persist the event in the Gateway database and return 201.
-5. If the Account Service call fails for any reason (network error, timeout, 4xx, 5xx): return **503 Service Unavailable** and save nothing.
-
-**Why this order?**
-
-The account balance is the source of truth. Writing the event locally first
-and then failing to apply it to the Account Service would leave the Gateway
-database with a record of a transaction that never actually changed any
-balance — a phantom event. By calling the Account Service first we ensure
-that the Gateway only records events that are known to have been applied.
-The trade-off is that a crash between the Account Service success and the
-Gateway write can produce the reverse problem (applied but unrecorded), but
-this is recoverable via the duplicate-check on re-submission: the client
-retries with the same `event_id`, the fingerprint matches, and the Gateway
-returns 200 with the stored event.
-
-## Requirements
-
-- Java 21
-- Maven 3.9+
-
-## Build
-
-Each service is built independently:
+## Start with Docker Compose
 
 ```bash
-cd gateway-api   && mvn clean install
-cd account-service && mvn clean install
+docker compose up --build
 ```
 
-## Run
+This builds both images from source and starts them in order (account-service first, then gateway-api once the account-service health check passes).
 
-**gateway-api**
+| Service | URL |
+|---|---|
+| gateway-api | http://localhost:8080 |
+| account-service | http://localhost:8081 |
+
+Health checks:
 ```bash
-cd gateway-api
-mvn spring-boot:run
+curl http://localhost:8080/health
+curl http://localhost:8081/health
 ```
 
-**account-service**
+Stop everything:
+```bash
+docker compose down
+```
+
+---
+
+## Start locally (without Docker)
+
+Open two terminals.
+
+**Terminal 1 — account-service (start first)**
 ```bash
 cd account-service
 mvn spring-boot:run
+# Listening on http://localhost:8081
 ```
 
-Or run the packaged jars:
+**Terminal 2 — gateway-api**
 ```bash
-java -jar gateway-api/target/gateway-api-0.0.1-SNAPSHOT.jar
-java -jar account-service/target/account-service-0.0.1-SNAPSHOT.jar
+cd gateway-api
+mvn spring-boot:run
+# Listening on http://localhost:8080
+```
+
+Both services use in-memory H2 databases that reset on restart.
+
+---
+
+## Run the tests
+
+Each service has a self-contained test suite that needs no running infrastructure.
+
+```bash
+# Account Service (7 tests)
+cd account-service
+mvn test
+
+# Gateway API (23 tests)
+cd gateway-api
+mvn test
+```
+
+### What the tests cover
+
+**account-service** (`TransactionControllerTest`)
+- Auto-creates an account on the first transaction
+- Idempotency: re-posting the same `eventId` returns `200 OK`
+- Balance computed correctly after credits and debits
+- `GET /balance` on an unknown account returns `404`
+- Currency mismatch returns `422`
+- Out-of-order arrival: DEBIT before CREDIT still produces the correct balance
+
+**gateway-api** — unit tests (`EventControllerTest`)
+- New event → `201 Created`
+- Identical re-submission → `200 OK` (idempotent)
+- Same `eventId`, different payload → `409 Conflict`
+- `GET /events/{id}` returns `200` / `404`
+- Event list sorted by `eventTimestamp` ascending, regardless of submission order
+- Missing required fields → `400` with per-field error map
+- Negative amount → `400`; zero amount → `400`
+- Account Service down → `503`
+- `metadata` object field round-trips as real JSON (not double-encoded)
+- Balance proxy returns account-service response; returns `503` when down
+
+**gateway-api** — integration tests (`GatewayIntegrationTest`, WireMock)
+
+Real HTTP gateway server → real `AccountServiceClient` → WireMock standing in as the account-service. No mocks in the Spring context.
+
+| Test | What it proves |
+|---|---|
+| Full flow | Event is persisted and a real HTTP call reaches the account-service |
+| Idempotency | Duplicate submission hits the DB, account-service called exactly once |
+| Trace (custom) | `X-Trace-Id` sent by client is echoed in the response and forwarded to account-service |
+| Trace (generated) | When no trace ID is supplied, gateway generates one and forwards it |
+| Resiliency | Account-service `500` → gateway `503` |
+| Circuit breaker | Five consecutive failures open the breaker; the sixth call is rejected immediately without reaching WireMock |
+| TimeLimiter | A 2 s account-service delay exceeds the 1 s timeout → `503` |
+| Balance proxy | `GET /accounts/{id}/balance` is proxied end-to-end |
+
+---
+
+## API quick reference
+
+### Submit an event
+
+```bash
+curl -X POST http://localhost:8080/events \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "eventId":        "evt-001",
+    "accountId":      "acct-123",
+    "type":           "CREDIT",
+    "amount":         500.00,
+    "currency":       "USD",
+    "eventTimestamp": "2026-06-23T10:00:00Z",
+    "metadata":       {"source": "web", "region": "us-east-1"}
+  }'
+```
+
+Response `201 Created`:
+```json
+{
+  "eventId":           "evt-001",
+  "accountId":         "acct-123",
+  "type":              "CREDIT",
+  "amount":            500.00,
+  "currency":          "USD",
+  "eventTimestamp":    "2026-06-23T10:00:00Z",
+  "metadata":          {"source": "web", "region": "us-east-1"},
+  "payloadFingerprint":"a3f9..."
+}
+```
+
+### Get balance
+
+```bash
+curl http://localhost:8080/accounts/acct-123/balance
+```
+
+```json
+{"accountId": "acct-123", "currency": "USD", "balance": 500.00}
+```
+
+---
+
+## Resiliency pattern
+
+Every outbound call from the gateway to the account-service is wrapped with a Resilience4j **CircuitBreaker** and **TimeLimiter** applied as AOP advice on `AccountServiceClient`. The return type is `CompletableFuture<T>`, which is required for both annotations to function together.
+
+### Why a circuit breaker?
+
+Without it, each request to a degraded account-service blocks a Tomcat thread for up to 5 seconds waiting for the timeout. Under load, thread exhaustion cascades: the gateway itself becomes unresponsive even though the rest of its functionality (reading events from its own database) is completely unaffected. The circuit breaker short-circuits with a `503` in microseconds once the failure rate exceeds the threshold, keeping the gateway healthy and shedding load from a service that is already struggling.
+
+### Configuration
+
+| Parameter | Value | Effect |
+|---|---|---|
+| `sliding-window-size` | 10 calls | Failure rate evaluated over the last 10 calls |
+| `failure-rate-threshold` | 50 % | Circuit opens when ≥ 50 % of recent calls fail |
+| `wait-duration-in-open-state` | 30 s | Breaker stays OPEN for 30 s, then moves to HALF-OPEN |
+| `permitted-calls-in-half-open` | 3 | Three probe calls to test recovery before closing |
+| `timeout-duration` | 5 s | Hard per-call deadline; exceeded → `TimeoutException` |
+| `cancel-running-future` | true | Interrupts the ForkJoinPool thread when the deadline fires |
+
+### State transitions
+
+```
+  Failure rate > 50%
+CLOSED ──────────────► OPEN ──── 30 s ────► HALF-OPEN
+  ▲                                              │
+  │   3 probes succeed                           │
+  └──────────────────────────────────────────────┘
+          (3 probes fail → back to OPEN)
+```
+
+### Failure responses
+
+| Condition | Cause | Gateway response |
+|---|---|---|
+| Circuit OPEN | `CallNotPermittedException` | `503` — circuit breaker is open |
+| Call > 5 s | `TimeoutException` | `503` — call timed out |
+| Network / HTTP error | `RestClientException` | `503` — Account Service unavailable |
+
+`GET /events/{id}` and `GET /events?account=…` read only from the gateway's own H2 database and are completely unaffected by account-service failures.
+
+---
+
+## Observability
+
+Both services emit **ECS-formatted JSON logs** (`logging.structured.format.console=ecs`). Every log line includes the `traceId` from MDC so all log entries for a single request can be correlated across both services.
+
+The gateway additionally records:
+- `events.submitted` counter (tagged by `type`) via Micrometer
+- `account.service.call.duration` timer
+
+Actuator endpoints are exposed at the service root (`management.endpoints.web.base-path=/`):
+
+```
+GET /health    # liveness + component details
+GET /metrics   # Micrometer metrics
+GET /info
 ```

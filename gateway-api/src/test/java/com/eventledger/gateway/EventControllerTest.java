@@ -1,6 +1,7 @@
 package com.eventledger.gateway;
 
 import com.eventledger.gateway.client.AccountServiceClient;
+import com.eventledger.gateway.dto.BalanceResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,11 +11,13 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -106,6 +109,54 @@ class EventControllerTest {
                                 "Account Service unavailable")));
 
         ResponseEntity<Map> resp = post("/events", eventBody("gw-fail-1", "acct-f", "2024-01-01T00:00:00Z"));
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
+    void outOfOrder_threeEventsSubmittedOutOfChronologicalOrder_listReturnsSortedByTimestamp() {
+        // Submit in reverse chronological order: March, January, February
+        post("/events", eventBody("oo-evt-c", "acct-oo", "2024-03-01T00:00:00Z"));
+        post("/events", eventBody("oo-evt-a", "acct-oo", "2024-01-01T00:00:00Z"));
+        post("/events", eventBody("oo-evt-b", "acct-oo", "2024-02-01T00:00:00Z"));
+
+        ResponseEntity<Object[]> resp = rest.getForEntity("/events?account=acct-oo", Object[].class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).hasSize(3);
+        // Expect ascending timestamp order: Jan → Feb → Mar
+        assertThat(((Map<?, ?>) resp.getBody()[0]).get("eventId")).isEqualTo("oo-evt-a");
+        assertThat(((Map<?, ?>) resp.getBody()[1]).get("eventId")).isEqualTo("oo-evt-b");
+        assertThat(((Map<?, ?>) resp.getBody()[2]).get("eventId")).isEqualTo("oo-evt-c");
+    }
+
+    @Test
+    void postEvent_zeroAmount_returns400() {
+        ResponseEntity<Map> resp = post("/events",
+                "{\"eventId\":\"gw-zero\",\"accountId\":\"acct-z\",\"type\":\"CREDIT\"," +
+                "\"amount\":0,\"currency\":\"USD\",\"eventTimestamp\":\"2024-01-01T00:00:00Z\"}");
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void getBalance_accountServiceReturnsBalance_proxiesResponse() {
+        when(accountServiceClient.getBalance(eq("acct-h")))
+                .thenReturn(CompletableFuture.completedFuture(
+                        new BalanceResponse("acct-h", "USD", BigDecimal.valueOf(750))));
+
+        ResponseEntity<Map> resp = rest.getForEntity("/accounts/acct-h/balance", Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).containsEntry("accountId", "acct-h");
+        Number balance = (Number) resp.getBody().get("balance");
+        assertThat(balance.doubleValue()).isEqualTo(750.0);
+    }
+
+    @Test
+    void getBalance_accountServiceDown_returns503() {
+        when(accountServiceClient.getBalance(any()))
+                .thenReturn(CompletableFuture.failedFuture(
+                        new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                                "Account Service unavailable")));
+
+        ResponseEntity<Map> resp = rest.getForEntity("/accounts/acct-x/balance", Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     }
 
