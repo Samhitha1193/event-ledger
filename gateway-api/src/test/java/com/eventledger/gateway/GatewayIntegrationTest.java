@@ -2,6 +2,7 @@ package com.eventledger.gateway;
 
 import com.github.tomakehurst.wiremock.client.WireMock;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +42,9 @@ class GatewayIntegrationTest {
         registry.add("resilience4j.circuitbreaker.instances.accountService.wait-duration-in-open-state", () -> "2s");
         // Shorten the TimeLimiter so the timeout test completes in ~1 s
         registry.add("resilience4j.timelimiter.instances.accountService.timeout-duration", () -> "1s");
+        // Zero wait between retries so retry tests complete instantly and are deterministic
+        registry.add("resilience4j.retry.instances.accountService.wait-duration", () -> "0ms");
+        registry.add("resilience4j.retry.instances.accountService.enable-exponential-backoff", () -> "false");
     }
 
     @Autowired TestRestTemplate rest;
@@ -143,7 +147,10 @@ class GatewayIntegrationTest {
         assertThat((String) openResp.getBody().get("message"))
                 .containsIgnoringCase("circuit breaker");
 
-        // Exactly 5 requests reached WireMock — the 6th was short-circuited
+        // CB is inner (order=2), so it sees each attempt individually.
+        // Sub 0: 3 attempts → 3 CB failures. Sub 1: 2 attempts → CB opens on the 5th failure.
+        // Sub 1's 3rd attempt and all of subs 2-4 hit an OPEN CB with 0 WireMock calls.
+        // 6th call is also CB-rejected. Total WireMock calls: 3 + 2 = 5.
         wm.verify(exactly(5), postRequestedFor(urlPathMatching("/accounts/.*/transactions")));
     }
 
@@ -156,6 +163,31 @@ class GatewayIntegrationTest {
         ResponseEntity<Map> resp = submitEvent(event("tm-evt-1", "tm-acct"));
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    // ── Retry ─────────────────────────────────────────────────────────────────
+
+    @Test
+    void retry_transientFailure_eventuallySucceeds_returns201() {
+        wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
+                .inScenario("transient-failure")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(serverError())
+                .willSetStateTo("attempt-2"));
+        wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
+                .inScenario("transient-failure")
+                .whenScenarioStateIs("attempt-2")
+                .willReturn(serverError())
+                .willSetStateTo("attempt-3"));
+        wm.stubFor(post(urlPathMatching("/accounts/.*/transactions"))
+                .inScenario("transient-failure")
+                .whenScenarioStateIs("attempt-3")
+                .willReturn(aResponse().withStatus(201)));
+
+        ResponseEntity<Map> resp = submitEvent(event("retry-evt-1", "retry-acct-1"));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        wm.verify(exactly(3), postRequestedFor(urlPathMatching("/accounts/.*/transactions")));
     }
 
     // ── Balance proxy ─────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import com.eventledger.gateway.dto.BalanceResponse;
 import com.eventledger.gateway.dto.EventRequest;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import io.github.resilience4j.timelimiter.annotation.TimeLimiter;
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 import io.opentelemetry.context.Context;
@@ -43,8 +44,12 @@ public class AccountServiceClient {
                 .build();
     }
 
-    @CircuitBreaker(name = "accountService", fallbackMethod = "applyTransactionFallback")
-    @TimeLimiter(name = "accountService", fallbackMethod = "applyTransactionFallback")
+    // Aspect order: @Retry (1, outermost) → @CircuitBreaker (2) → @TimeLimiter (3, innermost).
+    // Only @Retry carries a fallbackMethod so it sees raw exceptions from the inner aspects
+    // before any conversion. @CircuitBreaker and @TimeLimiter propagate failures as-is.
+    @Retry(name = "accountService", fallbackMethod = "applyTransactionFallback")
+    @CircuitBreaker(name = "accountService")
+    @TimeLimiter(name = "accountService")
     public CompletableFuture<Void> applyTransaction(EventRequest req) {
         // Capture the OTel context on the request thread before crossing the async boundary —
         // Context is thread-local and invisible to the ForkJoinPool thread below.
@@ -76,8 +81,9 @@ public class AccountServiceClient {
         return CompletableFuture.failedFuture(toUnavailable(t));
     }
 
-    @CircuitBreaker(name = "accountService", fallbackMethod = "getBalanceFallback")
-    @TimeLimiter(name = "accountService", fallbackMethod = "getBalanceFallback")
+    @Retry(name = "accountService", fallbackMethod = "getBalanceFallback")
+    @CircuitBreaker(name = "accountService")
+    @TimeLimiter(name = "accountService")
     public CompletableFuture<BalanceResponse> getBalance(String accountId) {
         Context otelContext = Context.current();
         return CompletableFuture.supplyAsync(() -> {
